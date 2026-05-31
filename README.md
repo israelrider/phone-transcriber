@@ -91,9 +91,13 @@ OPENAI_MODEL=llama3.1:8b
 
 All three variables are **required** unless you use `--skip-cleanup`.
 
----
-
 ## Usage
+
+### Activate the venv before working on this project. Run it once per terminal session:
+
+```agsl
+..\.venv\Scripts\Activate.ps1
+```
 
 ### Basic — transcribe a file
 
