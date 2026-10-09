@@ -1,220 +1,107 @@
 # phone-transcriber
 
-Convert a Hebrew phone-call MP3 (or WAV / M4A / OGG) to a clean text file.
+Transcribe phone-call recordings (Hebrew, Russian, English) to text in the
+same language, **entirely on this machine** — no audio leaves the computer.
 
-**Two-stage pipeline:**
+Engine: [faster-whisper](https://github.com/SYSTRAN/faster-whisper) (CTranslate2).
 
-| Stage | What happens | Where it runs |
-|-------|-------------|---------------|
-| 1 — Transcription | [OpenAI Whisper](https://github.com/openai/whisper) converts audio → raw Hebrew text | **Local** (GPU or CPU) |
-| 2 — Cleanup | An Ollama Cloud language model fixes punctuation, adds speaker labels, corrects errors | **Ollama Cloud** (remote) |
+| Language | Model | Why |
+|----------|-------|-----|
+| Hebrew | `ivrit-ai/whisper-large-v3-turbo-ct2` | ivrit.ai's Hebrew fine-tune; much better than stock Whisper on Hebrew |
+| Russian, English | `large-v3-turbo` | Stock multilingual Whisper, already strong on both |
 
----
+Models download automatically on first use (~1.6 GB each) into the Hugging
+Face cache (`%USERPROFILE%\.cache\huggingface`).
 
-## Prerequisites
+Output for each recording, in `transcripts\` by default:
 
-### 1. Python ≥ 3.11
-
-```
-python --version
-```
-
-### 2. FFmpeg
-
-Whisper requires FFmpeg on your `PATH`.
-
-**Windows (recommended — winget):**
-```
-winget install Gyan.FFmpeg
-```
-Then open a new terminal and verify:
-```
-ffmpeg -version
-```
-
-**Alternative — Chocolatey:**
-```
-choco install ffmpeg
-```
-
-### 3. Ollama Cloud account & API key
-
-1. Go to <https://cloud.ollama.com> and sign in (or create an account).
-2. Navigate to **Settings → API Keys** and create a new key.
-3. Pull a model that supports Hebrew — recommended choices:
-
-   | Model | Notes |
-   |-------|-------|
-   | `llama3.1:8b` | Best Hebrew quality in this size range |
-   | `mistral:7b` | Solid multilingual alternative |
-   | `qwen2.5:7b` | Strong multilingual, very token-efficient |
-
-   In the Ollama Cloud web UI, click **Pull** next to your chosen model.
+- `<name>.txt` — the transcript, one phrase per line
+- `<name>.srt` — the same text with timestamps, so you can jump to any line
+  in the audio to check it (VLC opens `.srt` next to the audio file)
 
 ---
 
-## Installation
+## Setup (once)
 
-```
+Requires Python 3.13. FFmpeg is **not** needed (audio decoding is built in),
+though it's handy for converting files.
+
+```powershell
 cd C:\Users\user\Documents\localhost\python\phone-transcriber
-pip install -e .
+py -3.13 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -U pip
+python -m pip install -e ".[gpu]"
 ```
 
-This installs the `phone-transcriber` CLI and all Python dependencies
-(`openai-whisper`, `httpx`, `python-dotenv`).
-
-> **First run note:** Whisper downloads its model weights automatically on
-> first use (`~medium` ≈ 1.5 GB). Subsequent runs use the cached copy.
-
----
-
-## Configuration
-
-Copy the example env file and edit it:
-
-```
-copy .env.example .env
-```
-
-Open `.env` in any editor and set:
-
-```dotenv
-# Your Ollama Cloud API key
-OPENAI_API_KEY=ollama_xxxxxxxxxxxxxxxxxxxxxxxx
-
-# Ollama Cloud endpoint (leave as-is unless self-hosting)
-OPENAI_BASE_URL=https://cloud.ollama.com
-
-# The model you pulled in the Ollama Cloud UI
-OPENAI_MODEL=llama3.1:8b
-```
-
-All three variables are **required** unless you use `--skip-cleanup`.
+The `[gpu]` extra installs the CUDA 12 cuBLAS / cuDNN 9 DLLs needed to run on
+the NVIDIA GPU. Without it everything still works, on the CPU.
 
 ## Usage
 
-### Activate the venv before working on this project. Run it once per terminal session:
+Activate the venv once per terminal:
 
-```agsl
-..\.venv\Scripts\Activate.ps1
+```powershell
+.\.venv\Scripts\Activate.ps1
 ```
 
-### Basic — transcribe a file
+```powershell
+# A file, several files, or a whole folder — language is detected per file
+phone-transcriber transcribe "C:\calls\call.amr"
+phone-transcriber transcribe "C:\calls"
 
-```
-phone-transcriber transcribe --input "C:\path\to\call.mp3"
-```
-
-Output is saved to `artifacts\<filename>_<timestamp>.txt` automatically.
-
-### Specify output path
-
-```
-phone-transcriber transcribe --input call.mp3 --output transcript.txt
+# Force a language (skips detection)
+phone-transcriber transcribe "C:\calls\call.amr" --lang ru
 ```
 
-### Use a larger Whisper model (better accuracy, slower)
+Language detection uses the general model, because the Hebrew model can't do
+it: it labels every recording as Hebrew, and forcing Russian audio through it
+produces Russian written phonetically in Hebrew letters. Only force `--lang`
+when you're sure.
 
-```
-phone-transcriber transcribe --input call.mp3 --whisper-model large-v3
-```
+Supported input: `.amr .mp3 .m4a .wav .ogg .opus .3gp .aac .flac .wma`.
 
-Available Whisper sizes (smallest → largest / fastest → slowest):
+Files that already have a transcript in the output folder are skipped, so an
+interrupted folder run can simply be restarted. Use `--force` to redo them.
 
-| Model | VRAM | Speed | Hebrew accuracy |
-|-------|------|-------|-----------------|
-| `tiny` | ~1 GB | fastest | fair |
-| `base` | ~1 GB | fast | fair |
-| `small` | ~2 GB | fast | good |
-| `medium` | ~5 GB | moderate | **very good** ← default |
-| `large-v3` | ~10 GB | slow | excellent |
+| Option | Default | Meaning |
+|--------|---------|---------|
+| `--lang` | `auto` | `auto` (detect per file), or force `he`, `ru`, `en` |
+| `--out-dir` | `transcripts` | Where `.txt` / `.srt` files go |
+| `--model` | per language | Any faster-whisper model, e.g. `ivrit-ai/whisper-large-v3-ct2` (slower, possibly more accurate) |
+| `--device` | `auto` | `cuda`, `cpu`, or `auto` (GPU if available, falls back to CPU if it fails) |
+| `--compute-type` | `int8` | CTranslate2 precision. `int8` fits a 4 GB GPU; Pascal GPUs have no `float16` |
+| `--force` | off | Re-transcribe files that already have output |
 
-### Skip the Ollama cleanup step (raw Whisper output only)
+### Speed on this machine (Quadro P620 4 GB / i7-9750H)
 
-Useful for testing or when Ollama Cloud is unavailable.
+Hebrew model, 2.5-minute AMR clip, model loading included:
 
-```
-phone-transcriber transcribe --input call.mp3 --skip-cleanup
-```
-
-### Dry run — see what would happen without calling anything
-
-```
-phone-transcriber transcribe --input call.mp3 --dry-run
-```
-
-### Increase timeout for long calls
-
-```
-phone-transcriber transcribe --input long_call.mp3 --timeout-s 600
-```
-
-### Set Whisper model via environment variable
-
-Add to `.env`:
-```dotenv
-WHISPER_MODEL=large-v3
-```
-Then just run:
-```
-phone-transcriber transcribe --input call.mp3
-```
+| Device | Speed |
+|--------|-------|
+| GPU (`int8`) | ~1.6× realtime — a 10-min call ≈ 6 min |
+| CPU (`int8`) | ~0.7× realtime — a 10-min call ≈ 14 min |
 
 ---
 
-## Output format
+## Measuring accuracy
 
-The cleaned transcript is plain UTF-8 text. When speakers are
-distinguishable, the Ollama model formats the dialogue like:
+Don't trust any transcription tool (this one included) on faith. To measure it:
 
+1. Pick a few real calls — a clear one and a noisy one per language.
+2. Transcribe them, then fix one copy of each `.txt` by hand → that's the reference.
+3. Score machine output against it:
+
+```powershell
+phone-transcriber evaluate reference.txt transcripts\call.txt other_run\call.txt
 ```
-דובר 1: שלום, מה שלומך?
-דובר 2: בסדר גמור, תודה. מה נשמע?
-דובר 1: רציתי לשאול אותך לגבי הפגישה של מחר...
-```
 
-If speakers cannot be reliably separated, the text appears as continuous
-paragraphs.
+It prints **WER** (word error rate) and **CER** (character error rate) — lower
+is better. Punctuation, case, niqqud and `ё`/`е` are ignored. Numbers are not
+normalized: "340" vs "שלוש מאות וארבעים" counts as an error, so write numbers
+in the reference the way the model does (digits).
 
----
-
-## Environment variables reference
-
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `OPENAI_API_KEY` | Yes | Ollama Cloud API key |
-| `OPENAI_BASE_URL` | Yes | API base URL (`https://cloud.ollama.com`) |
-| `OPENAI_MODEL` | Yes | Model name as shown in Ollama Cloud |
-| `WHISPER_MODEL` | No | Whisper model size (default: `medium`) |
-
-Variables are loaded from `.env` in the working directory, or can be set
-in the shell environment directly.
-
----
-
-## Troubleshooting
-
-**`ffmpeg not found` / `FileNotFoundError`**
-Install FFmpeg and open a new terminal so the updated `PATH` takes effect.
-
-**`OPENAI_API_KEY is not set`**
-Make sure `.env` exists in the directory where you run the command,
-or export the variable in your shell.
-
-**Model not found on Ollama Cloud**
-Open <https://cloud.ollama.com>, go to **Models**, and pull the model
-specified in `OPENAI_MODEL`.
-
-**Out of memory during Whisper**
-Use a smaller Whisper model: `--whisper-model small` or `--whisper-model base`.
-
-**Transcription is inaccurate**
-Switch to a larger Whisper model: `--whisper-model large-v3`.
-For very noisy phone audio, `large-v3` makes a significant difference.
-
-**Hebrew text appears garbled / wrong direction in terminal**
-This is a terminal rendering issue, not a data issue. Open the `.txt` file
-in Notepad, VS Code, or any editor with RTL support — the content is correct.
+Use this to compare models (`--model`) or another service on the same calls.
 
 ---
 
@@ -222,13 +109,24 @@ in Notepad, VS Code, or any editor with RTL support — the content is correct.
 
 ```
 phone-transcriber/
-├── .env.example              ← copy to .env and fill in credentials
 ├── pyproject.toml
 ├── README.md
-├── artifacts/                ← output transcripts land here
 └── phone_transcriber/
-    ├── cli.py                ← argument parsing and orchestration
-    ├── transcriber.py        ← Whisper audio-to-text (Stage 1)
-    ├── ollama_client.py      ← Ollama Cloud HTTP client (Stage 2)
-    └── prompts.py            ← system & user prompts for the LLM
+    ├── cli.py           ← commands: transcribe, evaluate
+    ├── models.py        ← language → model mapping
+    ├── transcriber.py   ← faster-whisper wrapper, GPU/CPU selection
+    ├── output.py        ← .txt / .srt writers
+    └── evaluate.py      ← WER / CER scoring
 ```
+
+## Troubleshooting
+
+**Hebrew looks garbled / reversed in the terminal** — terminal rendering only.
+Open the `.txt` in Notepad or VS Code.
+
+**`[model] GPU load failed … falling back to CPU`** — the CUDA DLLs are
+missing (reinstall with `".[gpu]"`) or the GPU is out of memory (close other
+GPU programs). The run continues on the CPU.
+
+**`open() got an unexpected keyword argument 'metadata_errors'`** — PyAV ≥ 19
+is installed; `pyproject.toml` pins `av<19`. Reinstall with `pip install -e ".[gpu]"`.

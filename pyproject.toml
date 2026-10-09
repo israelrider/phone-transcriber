@@ -4,14 +4,22 @@ build-backend = "hatchling.build"
 
 [project]
 name = "phone-transcriber"
-version = "0.1.0"
-description = "Hebrew phone-call MP3 → text via Whisper (local) + Ollama Cloud cleanup"
+version = "0.2.0"
+description = "Local transcription of Hebrew / Russian / English phone calls with faster-whisper"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "openai-whisper>=20240930",
-    "httpx>=0.27,<0.29",
-    "python-dotenv>=1.0,<2",
+    "faster-whisper>=1.2,<2",
+    "jiwer>=3,<5",
+    # PyAV 19 dropped av.open(metadata_errors=...), which faster-whisper 1.2.1 still passes.
+    "av>=11,<19",
+]
+
+[project.optional-dependencies]
+# CUDA 12 runtime DLLs for GPU inference (CTranslate2 4.x needs cuBLAS 12 + cuDNN 9).
+gpu = [
+    "nvidia-cublas-cu12",
+    "nvidia-cudnn-cu12>=9,<10",
 ]
 
 [project.scripts]

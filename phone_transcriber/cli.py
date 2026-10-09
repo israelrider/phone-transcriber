@@ -1,120 +1,119 @@
 from __future__ import annotations
 
 import argparse
-import os
-from datetime import datetime, timezone
+import time
 from pathlib import Path
 
-from dotenv import find_dotenv, load_dotenv
+from phone_transcriber.models import LANGUAGES
 
-from phone_transcriber import ollama_client, transcriber
-from phone_transcriber.prompts import CLEANUP_SYSTEM_PROMPT, user_prompt
-
-
-def _stamp() -> str:
-    return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+AUDIO_SUFFIXES = {
+    ".amr", ".mp3", ".m4a", ".wav", ".ogg", ".opus", ".3gp", ".aac", ".flac", ".wma",
+}
 
 
-def _default_output(input_path: Path) -> Path:
-    artifacts = Path("artifacts")
-    artifacts.mkdir(exist_ok=True)
-    stem = input_path.stem
-    return artifacts / f"{stem}_{_stamp()}.txt"
+def _collect_inputs(paths: list[str]) -> list[Path]:
+    files: list[Path] = []
+    for raw in paths:
+        p = Path(raw).expanduser().resolve()
+        if p.is_dir():
+            files.extend(
+                sorted(f for f in p.iterdir() if f.suffix.lower() in AUDIO_SUFFIXES)
+            )
+        elif p.is_file():
+            files.append(p)
+        else:
+            print(f"[skip] not found: {p}")
+    return files
 
 
-def _run(args: argparse.Namespace) -> int:
-    input_path = Path(args.input).expanduser().resolve()
-    if not input_path.exists():
-        print(f"Error: file not found: {input_path}")
+def _transcribe(args: argparse.Namespace) -> int:
+    files = _collect_inputs(args.inputs)
+    if not files:
+        print("Error: no audio files to transcribe.")
         return 1
 
-    output_path = (
-        Path(args.output).expanduser() if args.output else _default_output(input_path)
-    )
+    # Imported here so `--help` and `evaluate` don't pay for loading CUDA.
+    from phone_transcriber import output
+    from phone_transcriber.transcriber import Transcriber
 
-    host = ollama_client.get_host()
-    model = ollama_client.get_model()
+    out_dir = Path(args.out_dir).expanduser()
+    engine = Transcriber(device=args.device, compute_type=args.compute_type)
+    failures = 0
 
-    if args.dry_run:
-        print(f"[dry-run] input : {input_path}")
-        print(f"[dry-run] output: {output_path}")
-        print(f"[dry-run] whisper model  : {args.whisper_model}")
-        print(f"[dry-run] ollama host    : {host}")
-        print(f"[dry-run] ollama model   : {model}")
-        return 0
-
-    # ── Stage 1: local Whisper transcription ─────────────────────────────────
-    raw = transcriber.transcribe(input_path, whisper_model=args.whisper_model)
-    print(f"[whisper] raw transcript length: {len(raw)} chars")
-
-    # ── Stage 2: Ollama Cloud cleanup ─────────────────────────────────────────
-    if args.skip_cleanup:
-        final = raw
-        print("[ollama] skipping cleanup (--skip-cleanup)")
-    else:
-        api_key = ollama_client.get_api_key()
-        print(f"[ollama] sending to model '{model}' for cleanup …")
-        messages = [
-            {"role": "system", "content": CLEANUP_SYSTEM_PROMPT},
-            {"role": "user", "content": user_prompt(raw)},
-        ]
-        final = ollama_client.chat_completion(
-            host=host,
-            api_key=api_key,
-            model=model,
-            messages=messages,
-            timeout_s=float(args.timeout_s),
+    for i, path in enumerate(files, start=1):
+        txt_path = out_dir / f"{path.stem}.txt"
+        if txt_path.exists() and not args.force:
+            print(f"[{i}/{len(files)}] exists, skipping (use --force): {txt_path}")
+            continue
+        print(f"[{i}/{len(files)}] {path.name}")
+        started = time.perf_counter()
+        try:
+            transcript = engine.transcribe(path, language=args.lang, model_name=args.model)
+        except Exception as exc:  # keep going through the rest of a batch
+            failures += 1
+            print(f"[error] {path.name}: {exc}")
+            continue
+        output.write(transcript, txt_path)
+        elapsed = time.perf_counter() - started
+        speed = transcript.duration / elapsed if elapsed else 0
+        print(
+            f"[done] {transcript.duration:.0f}s of audio in {elapsed:.0f}s "
+            f"({speed:.1f}x realtime) -> {txt_path}"
         )
 
-    # ── Write output ──────────────────────────────────────────────────────────
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(final + "\n", encoding="utf-8")
-    print(f"[done] transcript saved: {output_path}")
+    return 1 if failures else 0
+
+
+def _evaluate(args: argparse.Namespace) -> int:
+    from phone_transcriber.evaluate import report
+
+    report(Path(args.reference), [Path(h) for h in args.hypotheses])
     return 0
 
 
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="phone-transcriber",
-        description="Transcribe a Hebrew phone-call MP3 to text (Whisper + Ollama Cloud).",
+        description="Transcribe phone-call recordings (Hebrew, Russian, English) locally.",
     )
     sub = p.add_subparsers(dest="cmd", required=True)
-    run = sub.add_parser("transcribe", help="Transcribe an MP3 file")
 
-    run.add_argument("--input", required=True, help="Path to the MP3 (or WAV/M4A/OGG) file")
-    run.add_argument(
-        "--output",
+    t = sub.add_parser("transcribe", help="Transcribe audio files or folders")
+    t.add_argument("inputs", nargs="+", help="Audio files and/or folders containing them")
+    t.add_argument(
+        "--lang",
+        # Not "he": the Hebrew model transcribes Russian/English audio as Hebrew-letter
+        # gibberish without complaint, so detecting per file is the safe default.
+        default="auto",
+        choices=[*LANGUAGES, "auto"],
+        help="Spoken language (default: auto = detect per file). Forcing one skips detection.",
+    )
+    t.add_argument(
+        "--out-dir",
+        default="transcripts",
+        help="Where to write <name>.txt and <name>.srt (default: ./transcripts)",
+    )
+    t.add_argument(
+        "--model",
         default=None,
-        help="Output .txt path (default: artifacts/<stem>_<timestamp>.txt)",
+        help="Override the per-language model (e.g. ivrit-ai/whisper-large-v3-ct2)",
     )
-    run.add_argument(
-        "--whisper-model",
-        default=os.getenv("WHISPER_MODEL", "medium"),
-        choices=["tiny", "base", "small", "medium", "large", "large-v2", "large-v3"],
-        help="Whisper model size (default: medium). Larger = slower but more accurate.",
+    t.add_argument("--device", default="auto", choices=["auto", "cuda", "cpu"])
+    t.add_argument(
+        "--compute-type",
+        default="int8",
+        help="CTranslate2 compute type (default: int8; fits a 4 GB GPU)",
     )
-    run.add_argument(
-        "--skip-cleanup",
-        action="store_true",
-        help="Skip the Ollama Cloud cleanup step; save the raw Whisper output.",
-    )
-    run.add_argument(
-        "--timeout-s",
-        type=float,
-        default=300.0,
-        help="HTTP timeout for the Ollama Cloud API call (seconds)",
-    )
-    run.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Print what would happen without calling Whisper or the API",
-    )
-    run.set_defaults(func=_run)
+    t.add_argument("--force", action="store_true", help="Redo files that already have output")
+    t.set_defaults(func=_transcribe)
+
+    e = sub.add_parser("evaluate", help="Score transcripts against a corrected reference")
+    e.add_argument("reference", help="Hand-corrected transcript (.txt)")
+    e.add_argument("hypotheses", nargs="+", help="Machine transcripts to score (.txt)")
+    e.set_defaults(func=_evaluate)
     return p
 
 
 def main() -> None:
-    load_dotenv(find_dotenv(usecwd=True) or None)
-    parser = build_parser()
-    args = parser.parse_args()
+    args = build_parser().parse_args()
     raise SystemExit(args.func(args))
