@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -28,9 +29,18 @@ from faster_whisper import WhisperModel, decode_audio  # noqa: E402
 from phone_transcriber.models import (  # noqa: E402
     DEFAULT_LANGUAGE,
     GENERAL_MODEL,
+    HOTWORDS,
     LANGUAGES,
+    RU_HEBREW_TERMS,
     model_for,
 )
+
+
+def hebraize(text: str) -> str:
+    """Write Hebrew terms in Hebrew script, dropping Russian case endings."""
+    for ru, he in RU_HEBREW_TERMS.items():
+        text = re.sub(rf"\b{ru}\w*", he, text)
+    return text
 
 DETECTION_WINDOWS = 4
 # Share of (he + ru + en) a non-default language needs before we switch to it.
@@ -138,6 +148,8 @@ class Transcriber:
             # Stops one misheard phrase from snowballing into a repetition loop,
             # a common failure on noisy phone audio.
             condition_on_previous_text=False,
+            # Unlike initial_prompt, hotwords reach every 30 s window.
+            hotwords=HOTWORDS.get(language),
         )
-        result = [Segment(s.start, s.end, s.text.strip()) for s in segments]
+        result = [Segment(s.start, s.end, hebraize(s.text.strip())) for s in segments]
         return Transcript(language, probability, name, info.duration, result)
