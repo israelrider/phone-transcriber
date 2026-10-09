@@ -25,7 +25,16 @@ os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
 import ctranslate2  # noqa: E402
 from faster_whisper import WhisperModel, decode_audio  # noqa: E402
 
-from phone_transcriber.models import GENERAL_MODEL, model_for  # noqa: E402
+from phone_transcriber.models import (  # noqa: E402
+    DEFAULT_LANGUAGE,
+    GENERAL_MODEL,
+    LANGUAGES,
+    model_for,
+)
+
+DETECTION_WINDOWS = 4
+# Share of (he + ru + en) a non-default language needs before we switch to it.
+CONFIDENT_SHARE = 0.7
 
 
 @dataclass
@@ -76,11 +85,39 @@ class Transcriber:
         return self._models[name]
 
     def detect_language(self, audio) -> tuple[str, float]:
+        """Pick one of LANGUAGES, assuming Hebrew unless another is clearly likelier.
+
+        On narrowband phone audio Whisper's detector is close to a coin flip
+        (a real Hebrew call scored he 27% / en 23% / ru 18%), and guessing wrong
+        makes the general model *translate* the call into invented English.
+        So: average the scores over several 30 s windows, compare only our
+        languages, and leave Hebrew only on a confident result.
+        """
         model = self._load(GENERAL_MODEL)
-        language, probability, _ = model.detect_language(
-            audio, vad_filter=True, language_detection_segments=3
-        )
-        return language, probability
+        window = 30 * 16000  # decode_audio() returns 16 kHz samples
+        starts = range(0, max(len(audio) - window // 3, 1), window)
+        totals = dict.fromkeys(LANGUAGES, 0.0)
+        for start in list(starts)[:DETECTION_WINDOWS]:
+            _, _, scores = model.detect_language(
+                audio[start : start + window], vad_filter=True
+            )
+            for lang, p in scores:
+                if lang in totals:
+                    totals[lang] += p
+
+        total = sum(totals.values()) or 1.0
+        shares = {lang: p / total for lang, p in totals.items()}
+        best = max(shares, key=shares.get)
+        summary = " / ".join(f"{lang} {shares[lang]:.0%}" for lang in LANGUAGES)
+        if best != DEFAULT_LANGUAGE and shares[best] < CONFIDENT_SHARE:
+            print(
+                f"[lang] WARNING: uncertain ({summary}) -> using '{DEFAULT_LANGUAGE}'. "
+                f"If wrong, rerun with --lang {best} --force"
+            )
+            best = DEFAULT_LANGUAGE
+        else:
+            print(f"[lang] {summary}")
+        return best, shares[best]
 
     def transcribe(
         self, path: Path, language: str = "he", model_name: str | None = None

@@ -54,10 +54,18 @@ phone-transcriber transcribe "C:\calls"
 phone-transcriber transcribe "C:\calls\call.amr" --lang ru
 ```
 
-Language detection uses the general model, because the Hebrew model can't do
-it: it labels every recording as Hebrew, and forcing Russian audio through it
-produces Russian written phonetically in Hebrew letters. Only force `--lang`
-when you're sure.
+How language detection works, and its limits:
+
+- Detection uses the general model; the Hebrew model can't do it (it labels
+  every recording as Hebrew, and Russian audio forced through it comes out as
+  Russian written phonetically in Hebrew letters).
+- On real 8 kHz phone audio detection is weak — a real Hebrew call scored
+  only he 36% / ru 34% / en 30%. Guessing English there makes the general
+  model *translate* the call into invented English.
+- So detection is **Hebrew-first**: it switches to Russian/English only when
+  that language gets ≥ 70% of the score. Otherwise it uses Hebrew and prints
+  `[lang] WARNING: uncertain … rerun with --lang ru --force`. Watch for that
+  line on Russian calls.
 
 Supported input: `.amr .mp3 .m4a .wav .ogg .opus .3gp .aac .flac .wma`.
 

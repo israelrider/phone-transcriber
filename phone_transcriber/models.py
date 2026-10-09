@@ -16,6 +16,9 @@ MODEL_FOR_LANGUAGE = {
 
 LANGUAGES = tuple(MODEL_FOR_LANGUAGE)
 
+# Most calls are Hebrew; auto-detection falls back to this when unsure.
+DEFAULT_LANGUAGE = "he"
+
 
 def model_for(language: str) -> str:
     return MODEL_FOR_LANGUAGE.get(language, GENERAL_MODEL)
