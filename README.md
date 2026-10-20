@@ -23,7 +23,9 @@ phone-transcriber runs on an ordinary Windows PC:
   against a hand-corrected reference, so quality is measured, not assumed.
 - **Batch-friendly** — point it at a folder of recordings; interrupted runs resume.
 
-<!-- Demo screenshot: docs/demo.png (a test recording, never a real call) -->
+![Transcribing a Hebrew and a Russian call on the GPU (phone numbers hidden)](docs/demo.png)
+
+*A 54-second Hebrew call in 17 s and a 28-second Russian call in 12 s on a 4 GB laptop GPU.*
 
 ---
 
