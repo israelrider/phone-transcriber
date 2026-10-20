@@ -3,6 +3,30 @@
 Transcribe phone-call recordings (Hebrew, Russian, English) to text in the
 same language, **entirely on this machine** — no audio leaves the computer.
 
+## Why it exists
+
+Recorded calls hold things you need later: a price that was agreed, an
+appointment, what the insurance company or the bank actually promised. Cloud
+transcription services mean uploading private conversations to someone
+else's server, and most of them handle Hebrew poorly and calls that mix
+Russian and Hebrew even worse.
+
+phone-transcriber runs on an ordinary Windows PC:
+
+- **Private** — audio and text never leave the computer; no account, no subscription.
+- **Hebrew done properly** — uses ivrit.ai's Hebrew-tuned Whisper model; Russian
+  calls keep Israeli terms (ביטוח לאומי, קופת חולים, סלקום…) in Hebrew script
+  instead of garbled transliteration.
+- **Checkable** — every transcript comes with a timestamped `.srt`, so any line can
+  be checked against the audio in seconds.
+- **Measurable** — a built-in `evaluate` command scores accuracy (WER / CER)
+  against a hand-corrected reference, so quality is measured, not assumed.
+- **Batch-friendly** — point it at a folder of recordings; interrupted runs resume.
+
+<!-- Demo screenshot: docs/demo.png (a test recording, never a real call) -->
+
+---
+
 Engine: [faster-whisper](https://github.com/SYSTRAN/faster-whisper) (CTranslate2).
 
 | Language | Model | Why |
@@ -27,7 +51,7 @@ Requires Python 3.13. FFmpeg is **not** needed (audio decoding is built in),
 though it's handy for converting files.
 
 ```powershell
-cd C:\Users\user\Documents\localhost\python\phone-transcriber
+cd phone-transcriber   # the folder you cloned
 py -3.13 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install -U pip
@@ -66,6 +90,24 @@ How language detection works, and its limits:
   that language gets ≥ 70% of the score. Otherwise it uses Hebrew and prints
   `[lang] WARNING: uncertain … rerun with --lang ru --force`. Watch for that
   line on Russian calls.
+
+### Example: transcribe a folder of Hebrew calls
+
+```powershell
+cd C:\Users\user\localhost\python\phone-transcriber
+.\.venv\Scripts\Activate.ps1
+phone-transcriber transcribe "C:\Users\user\Downloads\Mobile Devices" --lang he
+```
+
+`--lang he` skips detection and uses the Hebrew model directly. Results land
+in `transcripts\` (`<name>.txt` and `<name>.srt`). Files that were already
+transcribed are skipped — add `--force` to redo them.
+
+Read the result in Notepad (the terminal shows Hebrew reversed):
+
+```powershell
+notepad transcripts\<name>.txt
+```
 
 Supported input: `.amr .mp3 .m4a .wav .ogg .opus .3gp .aac .flac .wma`.
 
@@ -128,6 +170,11 @@ phone-transcriber/
 ```
 
 ## Troubleshooting
+
+**`Fatal error in launcher: Unable to create process using '"C:\…\python.exe"'`**
+— the project folder (or `.venv`) was moved. A venv can't be moved on Windows:
+`phone-transcriber.exe` and the editable install keep the old path. Delete
+`.venv` and redo [Setup](#setup-once).
 
 **Hebrew looks garbled / reversed in the terminal** — terminal rendering only.
 Open the `.txt` in Notepad or VS Code.
