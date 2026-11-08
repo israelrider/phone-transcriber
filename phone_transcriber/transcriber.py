@@ -36,10 +36,16 @@ from phone_transcriber.models import (  # noqa: E402
 )
 
 
+_HEBREW_TERM_PATTERNS = [
+    (re.compile(rf"\b(?:{pattern or re.escape(ru) + r'\w*'})", re.IGNORECASE), he)
+    for ru, he, pattern in RU_HEBREW_TERMS
+]
+
+
 def hebraize(text: str) -> str:
     """Write Hebrew terms in Hebrew script, dropping Russian case endings."""
-    for ru, he in RU_HEBREW_TERMS.items():
-        text = re.sub(rf"\b{ru}\w*", he, text)
+    for pattern, he in _HEBREW_TERM_PATTERNS:
+        text = pattern.sub(he, text)
     return text
 
 DETECTION_WINDOWS = 4
