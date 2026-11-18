@@ -79,6 +79,8 @@ _HOTWORD_TERMS: list[Term] = [
 
 RU_HEBREW_TERMS: list[Term] = _DAY_TERMS + _HOTWORD_TERMS
 
+# No Hebrew entry on purpose: tested on a real call, Hebrew hotwords fixed a few
+# names but made the model silently skip the first 100 s of speech.
 HOTWORDS = {"ru": ", ".join(dict.fromkeys(ru for ru, _, _ in _HOTWORD_TERMS))}
 
 # Most calls are Hebrew; auto-detection falls back to this when unsure.

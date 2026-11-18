@@ -52,6 +52,10 @@ DETECTION_WINDOWS = 4
 # Share of (he + ru + en) a non-default language needs before we switch to it.
 CONFIDENT_SHARE = 0.7
 
+# Looser than Silero's defaults (threshold 0.5, 30 ms padding): on phone calls
+# the far side is often quiet, and the defaults drop it as silence.
+VAD_PARAMETERS = dict(threshold=0.3, min_silence_duration_ms=500, speech_pad_ms=400)
+
 
 @dataclass
 class Segment:
@@ -151,6 +155,7 @@ class Transcriber:
             language=language,
             beam_size=5,
             vad_filter=True,
+            vad_parameters=VAD_PARAMETERS,
             # Stops one misheard phrase from snowballing into a repetition loop,
             # a common failure on noisy phone audio.
             condition_on_previous_text=False,
